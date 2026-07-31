@@ -27,3 +27,8 @@ __pycache__/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Local media conversion scratch files
+assets/*.temp
+assets/*.log
+assets/intro-pass*

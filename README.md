@@ -2,6 +2,16 @@
 
 一个面向 Windows 单机使用的抖音公开评论线索整理工具。它可以按行业、产品或服务关键词检索公开视频，分析公开评论中的咨询与购买意向，并将线索保存在本机、筛选管理及导出为 Excel。
 
+## 产品介绍视频
+
+▶️ **[点击前往哔哩哔哩观看完整产品介绍](https://www.bilibili.com/video/BV1tcGA6pEAN/)**
+
+视频 BV 号：`BV1tcGA6pEAN`
+
+## Windows 绿色版下载
+
+不想配置 Python 环境的用户，可以前往 [GitHub Releases](https://github.com/1213109176kgy-png/douyin-lead-system/releases) 下载最新的 Windows 绿色免安装版，解压后运行 `DouyinLeadSystem.exe`。
+
 ## 主要功能
 
 - 按关键词创建获客任务，设置目标客户数、视频数和评论数
@@ -65,3 +75,11 @@ pytest -q
 ## 许可证
 
 本项目采用 [MIT License](LICENSE)。
+
+## 联系作者
+
+如果你在部署或使用过程中遇到问题，可以扫描下方二维码添加作者微信：
+
+<p align="left">
+  <img src="assets/微信二维码.jpg" alt="作者微信二维码" width="360">
+</p>
