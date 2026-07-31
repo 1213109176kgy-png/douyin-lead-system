@@ -1,0 +1,29 @@
+# Local secrets and user data
+data/
+*.db
+*.db-wal
+*.db-shm
+settings.json
+*.log
+
+# Portable builds and downloaded models
+release/
+build/
+dist/
+*.zip
+models/
+
+# Python environments and caches
+.venv/
+.venv310/
+venv/
+__pycache__/
+*.py[cod]
+!server/**/pyarmor_runtime.pyd
+.pytest_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

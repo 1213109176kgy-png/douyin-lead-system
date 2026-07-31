@@ -1,0 +1,13 @@
+[project]
+name = "douyin-lead-desktop"
+version = "0.1.0"
+description = "Portable Windows desktop client for local Douyin lead acquisition"
+requires-python = ">=3.10"
+dependencies = ["PySide6>=6.7,<7", "faster-whisper==1.2.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pyinstaller>=6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
