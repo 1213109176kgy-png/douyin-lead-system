@@ -81,7 +81,7 @@ pytest -q
 如果你在部署或使用过程中遇到问题（比如缺少订单号），可以扫描下方二维码添加作者微信免费获取：
 
 <p align="left">
-  <img src="assets/微信二维码.jpg" alt="作者微信二维码" width="360">
+  <img src="https://github.com/user-attachments/assets/86c44423-528c-4e44-88d1-3a7ebf586545" alt="作者微信二维码" width="360">
 </p>
 
 ## 鼓励作者
