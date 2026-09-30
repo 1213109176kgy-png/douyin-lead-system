@@ -24,7 +24,7 @@ from .douyin_browser import DouyinBrowserSearch
 from .exporter import export_leads
 from .paths import AppPaths
 from .scoring import DEFAULT_NEGATIVES, DEFAULT_RULES
-from .secure_store import SettingsStore
+from .secure_store import SettingsStore, save_ai_configuration
 from .server_manager import ServerManager
 from .video_ai import (
     analyze_video, download_media, find_media_url, resolve_media_url_with_browser,
@@ -585,15 +585,22 @@ class MainWindow(QMainWindow):
         if not hasattr(self,"export_count"):return
         task_id,level,status=self.export_filters(); self.export_count.setText(f"预计导出 {len(self.db.list_leads(level=level,task_id=task_id,status=status))} 条")
 
+    def persist_ai_settings(self):
+        api_key=self.ai_key.text().strip()
+        save_ai_configuration(self.settings,api_key,self.ai_base_url.text(),self.ai_model.text(),self.ai_temperature.value(),self.analysis_prompt.toPlainText(),self.rewrite_prompt.toPlainText())
+        if api_key:
+            self.ai_key.clear(); self.ai_key.setPlaceholderText("已保存")
+
     def save_settings(self):
-        if self.ai_key.text(): self.settings.set_secret("ai_api_key",self.ai_key.text()); self.ai_key.clear(); self.ai_key.setPlaceholderText("已保存")
-        self.settings.update(request_delay=self.delay.value(),ai_base_url=self.ai_base_url.text().strip(),ai_model=self.ai_model.text().strip(),ai_temperature=self.ai_temperature.value(),ai_timeout=90,analysis_prompt=self.analysis_prompt.toPlainText(),rewrite_prompt=self.rewrite_prompt.toPlainText()); QMessageBox.information(self,"设置","设置已保存到本机。")
+        self.persist_ai_settings()
+        self.settings.update(request_delay=self.delay.value()); QMessageBox.information(self,"设置","设置已保存到本机。")
 
     def test_ai(self):
-        if self.ai_key.text(): self.settings.set_secret("ai_api_key",self.ai_key.text()); self.ai_key.clear()
         try:
-            result=OpenAICompatibleClient(self.ai_base_url.text().strip(),self.settings.get_secret("ai_api_key"),self.ai_model.text().strip(),30,0).chat("只回复：连接成功")
-            QMessageBox.information(self,"AI 连接",result[:300])
+            self.persist_ai_settings()
+            saved=self.settings.load()
+            result=OpenAICompatibleClient(saved.get("ai_base_url",""),self.settings.get_secret("ai_api_key"),saved.get("ai_model",""),30,0).chat("只回复：连接成功")
+            QMessageBox.information(self,"AI 连接",f"配置已保存。\n\n{result[:300]}")
         except Exception as exc: QMessageBox.warning(self,"AI 连接失败",str(exc))
 
     def login_douyin(self):

@@ -148,7 +148,16 @@ def transcribe_local(media_path: Path, model_dir: Path, progress=lambda _text: N
     progress("正在加载或首次下载 Whisper base 模型…")
     model = WhisperModel("base", device="cpu", compute_type="int8", download_root=str(model_dir))
     progress("正在识别视频口播…")
-    segments, _info = model.transcribe(str(media_path), language="zh", vad_filter=True, beam_size=5)
+    try:
+        segments, _info = model.transcribe(str(media_path), language="zh", vad_filter=True, beam_size=5)
+    except IndexError as exc:
+        # PyAV raises this when an image post or silent MP4 has no audio stream.
+        # Treat that as "no transcript" so the caller can continue using the
+        # real title and collected metadata instead of aborting the workflow.
+        if "tuple index out of range" not in str(exc).lower():
+            raise
+        progress("视频没有可识别的音轨，将跳过口播识别…")
+        return ""
     return "\n".join(segment.text.strip() for segment in segments if segment.text.strip())
 
 

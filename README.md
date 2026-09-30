@@ -12,6 +12,13 @@
 
 不想配置 Python 环境的用户，可以前往 [GitHub Releases](https://github.com/1213109176kgy-png/douyin-lead-system/releases) 下载最新的 Windows 绿色免安装版，解压后运行 `DouyinLeadSystem.exe`。
 
+## v1.2.7 修复说明
+
+- 修复图文、静音或无音轨视频在口播识别时出现 `tuple index out of range`，导致视频拆解中断的问题。
+- 无可识别音轨时会自动跳过口播识别，继续使用真实视频标题和已采集信息进行拆解。
+- 修复 AI 接口测试成功后，视频拆解仍提示配置 API 地址、API Key 和模型名称的问题；测试连接时会同步保存整套 AI 配置。
+- 其他视频文件损坏或模型异常仍会正常提示错误，不会被静默忽略。
+
 ## v1.2.6 更新说明
 
 ### 新增功能

@@ -76,3 +76,25 @@ class SettingsStore:
 
     def update(self, **values):
         data = self.load(); data.update(values); self.save(data)
+
+
+def save_ai_configuration(
+    store: SettingsStore,
+    api_key: str,
+    base_url: str,
+    model: str,
+    temperature: float,
+    analysis_prompt: str,
+    rewrite_prompt: str,
+):
+    """Persist the exact AI configuration used by connection tests and workers."""
+    if api_key:
+        store.set_secret("ai_api_key", api_key)
+    store.update(
+        ai_base_url=base_url.strip(),
+        ai_model=model.strip(),
+        ai_temperature=float(temperature),
+        ai_timeout=90,
+        analysis_prompt=analysis_prompt,
+        rewrite_prompt=rewrite_prompt,
+    )

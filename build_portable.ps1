@@ -44,9 +44,9 @@ if ($null -eq $PreviousBrowserPath) { Remove-Item Env:PLAYWRIGHT_BROWSERS_PATH -
 & "$Venv\Scripts\pyinstaller.exe" --noconfirm --clean --onefile --windowed --name "DouyinLeadSystem" --distpath $Release --workpath "$Project\build\launcher" --specpath "$Project\build" "$Project\launcher.py"
 $Readme = Get-ChildItem -LiteralPath $Project -Filter "*.txt" | Where-Object { $_.Name -ne "version.txt" } | Select-Object -First 1
 Copy-Item $Readme.FullName "$Release\README.txt" -Force
-Set-Content -Path "$Release\version.txt" -Encoding UTF8 -Value "Douyin Lead System Portable`r`nVersion: 1.2.6`r`nPython: 3.10.18`r`nData: data"
+Set-Content -Path "$Release\version.txt" -Encoding UTF8 -Value "Douyin Lead System Portable`r`nVersion: 1.2.7`r`nPython: 3.10.18`r`nData: data"
 
-$Zip = Join-Path $OutputDir "DouyinLeadSystem-Portable-v1.2.6.zip"
+$Zip = Join-Path $OutputDir "DouyinLeadSystem-Portable-v1.2.7.zip"
 if (Test-Path $Zip) { Remove-Item -LiteralPath $Zip -Force }
 & tar.exe -a -cf $Zip -C (Split-Path $Release -Parent) (Split-Path $Release -Leaf)
 if ($LASTEXITCODE -ne 0) { throw "ZIP creation failed: $LASTEXITCODE" }
