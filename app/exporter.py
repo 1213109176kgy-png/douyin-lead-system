@@ -32,11 +32,11 @@ def export_leads(db, output: Path, keyword="", level="", task_id=None, status=""
     output = Path(output); output.parent.mkdir(parents=True, exist_ok=True)
     counts = Counter(row["level"] for row in leads)
     overview = [["抖音获客系统导出", "结果"], ["任务ID", task_id or "全部"], ["关键词", keyword or "全部"], ["导出客户", len(leads)], ["高意向", counts["高"]], ["中意向", counts["中"]], ["低意向", counts["低"]], ["导出时间", datetime.now().strftime("%Y-%m-%d %H:%M:%S")], ["说明", "仅包含公开资料，敏感联系方式已脱敏，不得用于骚扰或未经授权的商业用途。"]]
-    headers = ["排名","任务ID","意向等级","意向分","公开昵称","公开用户ID","公开主页","关键词","原评论","来源视频","原视频地址","命中规则","跟进状态","标签","备注","证据数","首次发现","最后发现"]
+    headers = ["排名","任务ID","意向等级","意向分","公开昵称","IP属地","公开用户ID","公开主页","关键词","原评论","来源视频","原视频地址","命中规则","跟进状态","标签","备注","证据数","首次发现","最后发现"]
     data=[headers]
     for i,r in enumerate(leads,1):
         evidence=db.lead_evidence(r["id"]); first_evidence=evidence[0] if evidence else {}
-        data.append([i,r["task_id"],r["level"],r["score"],r["nickname"],r["user_id"],r["profile_url"],r["keyword"],first_evidence["comment_text"] if evidence else "",first_evidence["video_title"] if evidence else "",first_evidence["video_url"] if evidence else "",first_evidence["matched"] if evidence else "",r["status"],r["tags"],r["note"],r["evidence_count"],r["first_seen"],r["last_seen"]])
+        data.append([i,r["task_id"],r["level"],r["score"],r["nickname"],r["region"],r["user_id"],r["profile_url"],r["keyword"],first_evidence["comment_text"] if evidence else "",first_evidence["video_title"] if evidence else "",first_evidence["video_url"] if evidence else "",first_evidence["matched"] if evidence else "",r["status"],r["tags"],r["note"],r["evidence_count"],r["first_seen"],r["last_seen"]])
     with db.connect() as connection:
         logs = connection.execute("SELECT stage,target,status,found,message,created_at FROM operation_logs ORDER BY id DESC LIMIT 2000").fetchall()
     log_rows = [["阶段","对象","状态","发现数量","消息","时间"]] + [list(x) for x in logs]
@@ -47,5 +47,5 @@ def export_leads(db, output: Path, keyword="", level="", task_id=None, status=""
     styles = '<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Microsoft YaHei"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Microsoft YaHei"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1677FF"/></patternFill></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="2"><xf/><xf fontId="1" fillId="2" applyFont="1" applyFill="1"/></cellXfs></styleSheet>'
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", content_types); z.writestr("_rels/.rels", rels); z.writestr("xl/workbook.xml", workbook); z.writestr("xl/_rels/workbook.xml.rels", wb_rels); z.writestr("xl/styles.xml", styles)
-        z.writestr("xl/worksheets/sheet1.xml", _sheet(overview,[24,88],False)); z.writestr("xl/worksheets/sheet2.xml", _sheet(data,[8,9,10,9,18,25,42,18,45,35,42,35,12,18,30,9,20,20],True,1)); z.writestr("xl/worksheets/sheet3.xml", _sheet(log_rows,[14,28,12,12,55,20],True,1))
+        z.writestr("xl/worksheets/sheet1.xml", _sheet(overview,[24,88],False)); z.writestr("xl/worksheets/sheet2.xml", _sheet(data,[8,9,10,9,18,12,25,42,18,45,35,42,35,12,18,30,9,20,20],True,1)); z.writestr("xl/worksheets/sheet3.xml", _sheet(log_rows,[14,28,12,12,55,20],True,1))
     return output

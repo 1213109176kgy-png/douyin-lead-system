@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
+import urllib.parse
 import urllib.request
+import re
 from pathlib import Path
 
 from .ai_client import DEFAULT_ANALYSIS_PROMPT, DEFAULT_REWRITE_PROMPT, OpenAICompatibleClient
+
+
+def safe_video_filename(title: str, aweme_id: str) -> str:
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(title or "")).strip(" ._")
+    name = name[:80].strip(" ._") or str(aweme_id)
+    return f"{name}.mp4"
 
 
 def shorten(text: str, length: int = 30) -> str:
@@ -41,8 +50,87 @@ def find_media_url(payload) -> str:
     return ""
 
 
+def choose_media_url(urls: list[str]) -> str:
+    unique = list(dict.fromkeys(str(url) for url in urls if str(url).startswith("http")))
+    if not unique:
+        return ""
+
+    def rank(url: str) -> int:
+        host = urllib.parse.urlparse(url).netloc.lower()
+        if "douyinvod.com" in host:
+            return 0
+        if "douyinstatic.com" in host:
+            return 1
+        if "douyin.com" in host:
+            return 2
+        return 3
+
+    return sorted(unique, key=rank)[0]
+
+
+def resolve_media_url_with_browser(
+    page_url: str,
+    data_dir: Path,
+    cookie: str = "",
+    progress=lambda _text: None,
+) -> str:
+    from .douyin_browser import (
+        cookie_records_from_header,
+        launch_persistent_browser,
+        require_playwright,
+    )
+
+    media_urls: list[str] = []
+    sync_playwright = require_playwright()
+    with sync_playwright() as playwright:
+        context, browser_name = launch_persistent_browser(
+            playwright, Path(data_dir) / "douyin-media-profile", progress
+        )
+        try:
+            cookies = cookie_records_from_header(cookie)
+            if cookies:
+                context.add_cookies(cookies)
+            page = context.pages[0] if context.pages else context.new_page()
+
+            def response_seen(response):
+                content_type = response.headers.get("content-type", "").lower()
+                if response.request.resource_type == "media" or content_type.startswith("video/"):
+                    media_urls.append(response.url)
+
+            page.on("response", response_seen)
+            progress(f"正在通过{browser_name}解析原视频地址…")
+            page.goto(page_url, wait_until="domcontentloaded", timeout=45_000)
+            time.sleep(8)
+            media_urls.extend(page.evaluate("""
+                () => {
+                  const result = [];
+                  for (const video of document.querySelectorAll('video')) {
+                    if (video.currentSrc) result.push(video.currentSrc);
+                    if (video.src) result.push(video.src);
+                    for (const source of video.querySelectorAll('source')) {
+                      if (source.src) result.push(source.src);
+                    }
+                  }
+                  for (const selector of [
+                    'meta[property="og:video"]',
+                    'meta[property="og:video:url"]'
+                  ]) {
+                    const value = document.querySelector(selector)?.content;
+                    if (value) result.push(value);
+                  }
+                  return result;
+                }
+            """) or [])
+        finally:
+            context.close()
+    return choose_media_url(media_urls)
+
+
 def download_media(url: str, target: Path, cookie: str = "") -> Path:
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": "https://www.douyin.com/",
+    }
     if cookie:
         headers["Cookie"] = cookie
     request = urllib.request.Request(url, headers=headers)

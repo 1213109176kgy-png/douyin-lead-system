@@ -13,6 +13,7 @@ PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS tasks (
  id INTEGER PRIMARY KEY, keyword TEXT NOT NULL, target INTEGER NOT NULL,
  max_videos INTEGER NOT NULL DEFAULT 30, comments_per_video INTEGER NOT NULL DEFAULT 100,
+ region_filter TEXT NOT NULL DEFAULT '', time_range TEXT NOT NULL DEFAULT '不限',
  include_replies INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'pending',
  videos_scanned INTEGER NOT NULL DEFAULT 0, comments_scanned INTEGER NOT NULL DEFAULT 0,
  leads_found INTEGER NOT NULL DEFAULT 0, checkpoint TEXT NOT NULL DEFAULT '{}',
@@ -27,18 +28,19 @@ CREATE TABLE IF NOT EXISTS videos (
  task_id INTEGER, transcript TEXT NOT NULL DEFAULT '', analysis TEXT NOT NULL DEFAULT '',
  rewrite TEXT NOT NULL DEFAULT '', media_url TEXT NOT NULL DEFAULT '',
  archived INTEGER NOT NULL DEFAULT 0, analyzed_at TEXT NOT NULL DEFAULT '',
- material_tags TEXT NOT NULL DEFAULT '', material_note TEXT NOT NULL DEFAULT ''
+ material_tags TEXT NOT NULL DEFAULT '', material_note TEXT NOT NULL DEFAULT '',
+ local_video_path TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS comments (
  id INTEGER PRIMARY KEY, comment_id TEXT NOT NULL UNIQUE, aweme_id TEXT NOT NULL,
  user_key TEXT NOT NULL, user_id TEXT NOT NULL DEFAULT '', nickname TEXT NOT NULL DEFAULT '',
- text TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '', likes INTEGER NOT NULL DEFAULT 0,
+ text TEXT NOT NULL, region TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '', likes INTEGER NOT NULL DEFAULT 0,
  score INTEGER NOT NULL DEFAULT 0, level TEXT NOT NULL DEFAULT '', matched TEXT NOT NULL DEFAULT '',
  task_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS leads (
  id INTEGER PRIMARY KEY, user_key TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL DEFAULT '',
- nickname TEXT NOT NULL DEFAULT '', profile_url TEXT NOT NULL DEFAULT '', score INTEGER NOT NULL DEFAULT 0,
+ nickname TEXT NOT NULL DEFAULT '', profile_url TEXT NOT NULL DEFAULT '', region TEXT NOT NULL DEFAULT '', score INTEGER NOT NULL DEFAULT 0,
  level TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '待跟进', tags TEXT NOT NULL DEFAULT '',
  note TEXT NOT NULL DEFAULT '', keyword TEXT NOT NULL DEFAULT '', evidence_count INTEGER NOT NULL DEFAULT 0,
  first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, task_id INTEGER
@@ -81,9 +83,10 @@ class Database:
         with self.connect() as connection:
             connection.executescript(SCHEMA)
             migrations = {
-                "videos": {"task_id": "INTEGER", "transcript": "TEXT NOT NULL DEFAULT ''", "analysis": "TEXT NOT NULL DEFAULT ''", "rewrite": "TEXT NOT NULL DEFAULT ''", "media_url": "TEXT NOT NULL DEFAULT ''", "digg_count": "INTEGER NOT NULL DEFAULT 0", "collect_count": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "analyzed_at": "TEXT NOT NULL DEFAULT ''", "material_tags": "TEXT NOT NULL DEFAULT ''", "material_note": "TEXT NOT NULL DEFAULT ''"},
-                "comments": {"task_id": "INTEGER"},
-                "leads": {"task_id": "INTEGER"},
+                "videos": {"task_id": "INTEGER", "transcript": "TEXT NOT NULL DEFAULT ''", "analysis": "TEXT NOT NULL DEFAULT ''", "rewrite": "TEXT NOT NULL DEFAULT ''", "media_url": "TEXT NOT NULL DEFAULT ''", "digg_count": "INTEGER NOT NULL DEFAULT 0", "collect_count": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "analyzed_at": "TEXT NOT NULL DEFAULT ''", "material_tags": "TEXT NOT NULL DEFAULT ''", "material_note": "TEXT NOT NULL DEFAULT ''", "local_video_path": "TEXT NOT NULL DEFAULT ''"},
+                "tasks": {"region_filter": "TEXT NOT NULL DEFAULT ''", "time_range": "TEXT NOT NULL DEFAULT '不限'"},
+                "comments": {"task_id": "INTEGER", "region": "TEXT NOT NULL DEFAULT ''"},
+                "leads": {"task_id": "INTEGER", "region": "TEXT NOT NULL DEFAULT ''"},
             }
             for table_name, columns in migrations.items():
                 existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table_name})")}
@@ -98,12 +101,12 @@ class Database:
             for category, (weight, terms) in DEFAULT_RULES.items():
                 connection.execute("INSERT OR IGNORE INTO rules(category,weight,terms,enabled) VALUES(?,?,?,1)", (category, weight, terms))
 
-    def create_task(self, keyword: str, target: int, max_videos: int = 30, comments_per_video: int = 100, include_replies: bool = False) -> int:
+    def create_task(self, keyword: str, target: int, max_videos: int = 30, comments_per_video: int = 100, include_replies: bool = False, region_filter: str = "", time_range: str = "不限") -> int:
         now = datetime.now().isoformat(timespec="seconds")
         with self.connect() as connection:
             cursor = connection.execute(
-                "INSERT INTO tasks(keyword,target,max_videos,comments_per_video,include_replies,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
-                (keyword, target, max_videos, comments_per_video, int(include_replies), now, now),
+                "INSERT INTO tasks(keyword,target,max_videos,comments_per_video,include_replies,region_filter,time_range,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                (keyword, target, max_videos, comments_per_video, int(include_replies), region_filter.strip(), time_range, now, now),
             )
             return int(cursor.lastrowid)
 
@@ -127,33 +130,41 @@ class Database:
         with self.connect() as connection:
             connection.execute(
                 """INSERT INTO videos(aweme_id,title,author_uid,author_name,url,keyword,scanned_at,task_id,digg_count,collect_count,comment_count)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(aweme_id) DO UPDATE SET title=excluded.title,url=excluded.url,keyword=excluded.keyword,task_id=excluded.task_id,digg_count=excluded.digg_count,collect_count=excluded.collect_count,comment_count=excluded.comment_count""",
+                VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(aweme_id) DO UPDATE SET
+                title=excluded.title,
+                author_uid=CASE WHEN excluded.author_uid<>'' THEN excluded.author_uid ELSE videos.author_uid END,
+                author_name=CASE WHEN excluded.author_name<>'' THEN excluded.author_name ELSE videos.author_name END,
+                url=excluded.url,keyword=excluded.keyword,task_id=excluded.task_id,
+                digg_count=excluded.digg_count,collect_count=excluded.collect_count,comment_count=excluded.comment_count""",
                 (video["aweme_id"], video.get("title", ""), video.get("author_uid", ""), video.get("author_name", ""), video.get("url", ""), keyword, datetime.now().isoformat(timespec="seconds"), task_id, video.get("digg_count", 0), video.get("collect_count", 0), video.get("comment_count", 0)),
             )
 
     def save_qualified_comment(self, video: dict, comment: dict, scored, keyword: str, task_id: int | None = None) -> bool:
         user_key = comment.get("user_id") or f'{comment.get("nickname", "")}:{comment.get("profile_url", "")}'
         now = datetime.now().isoformat(timespec="seconds")
-        comment_id = comment.get("comment_id") or f'{video["aweme_id"]}:{user_key}:{abs(hash(comment["text"]))}'
+        source_comment_id = comment.get("comment_id") or f'{video["aweme_id"]}:{user_key}:{abs(hash(comment["text"]))}'
+        # A comment may legitimately qualify for several tasks with different
+        # region/time filters. Keep each task's evidence independently.
+        comment_id = f"{source_comment_id}:task:{task_id}" if task_id is not None else source_comment_id
         with self.connect() as connection:
             existing = connection.execute("SELECT id FROM comments WHERE comment_id=?", (comment_id,)).fetchone()
             if existing:
                 return False
             connection.execute(
-                "INSERT INTO comments(comment_id,aweme_id,user_key,user_id,nickname,text,created_at,likes,score,level,matched,task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (comment_id, video["aweme_id"], user_key, comment.get("user_id", ""), comment.get("nickname", ""), comment["text"], comment.get("created_at", ""), comment.get("likes", 0), scored.score, scored.level, "；".join(scored.matched), task_id),
+                "INSERT INTO comments(comment_id,aweme_id,user_key,user_id,nickname,text,region,created_at,likes,score,level,matched,task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (comment_id, video["aweme_id"], user_key, comment.get("user_id", ""), comment.get("nickname", ""), comment["text"], comment.get("region", ""), comment.get("created_at", ""), comment.get("likes", 0), scored.score, scored.level, "；".join(scored.matched), task_id),
             )
             lead = connection.execute("SELECT * FROM leads WHERE user_key=?", (user_key,)).fetchone()
             if lead:
                 connection.execute(
-                    "UPDATE leads SET score=MAX(score,?),level=CASE WHEN ?>score THEN ? ELSE level END,evidence_count=evidence_count+1,last_seen=? WHERE id=?",
-                    (scored.score, scored.score, scored.level, now, lead["id"]),
+                    "UPDATE leads SET score=MAX(score,?),level=CASE WHEN ?>score THEN ? ELSE level END,region=CASE WHEN ?<>'' THEN ? ELSE region END,evidence_count=evidence_count+1,last_seen=? WHERE id=?",
+                    (scored.score, scored.score, scored.level, comment.get("region", ""), comment.get("region", ""), now, lead["id"]),
                 )
                 lead_id = lead["id"]
             else:
                 cursor = connection.execute(
-                    "INSERT INTO leads(user_key,user_id,nickname,profile_url,score,level,keyword,evidence_count,first_seen,last_seen,task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (user_key, comment.get("user_id", ""), comment.get("nickname", ""), comment.get("profile_url", ""), scored.score, scored.level, keyword, 1, now, now, task_id),
+                    "INSERT INTO leads(user_key,user_id,nickname,profile_url,region,score,level,keyword,evidence_count,first_seen,last_seen,task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (user_key, comment.get("user_id", ""), comment.get("nickname", ""), comment.get("profile_url", ""), comment.get("region", ""), scored.score, scored.level, keyword, 1, now, now, task_id),
                 )
                 lead_id = cursor.lastrowid
             connection.execute(
@@ -163,7 +174,10 @@ class Database:
         return True
 
     def list_leads(self, keyword: str = "", level: str = "", limit: int = 5000, task_id: int | None = None, status: str = ""):
-        query, params = "SELECT * FROM leads WHERE 1=1", []
+        query, params = """SELECT leads.*,
+            COALESCE((SELECT c.task_id FROM lead_evidence e JOIN comments c ON c.comment_id=e.comment_id
+                      WHERE e.lead_id=leads.id ORDER BY c.id DESC LIMIT 1),leads.task_id) AS source_task_id
+            FROM leads WHERE 1=1""", []
         if keyword:
             query += " AND (keyword LIKE ? OR nickname LIKE ? OR user_id LIKE ?)"
             like = f"%{keyword}%"; params.extend([like, like, like])
@@ -173,7 +187,7 @@ class Database:
             query += " AND EXISTS (SELECT 1 FROM lead_evidence e JOIN comments c ON c.comment_id=e.comment_id WHERE e.lead_id=leads.id AND c.task_id=?)"; params.append(task_id)
         if status:
             query += " AND status=?"; params.append(status)
-        query += " ORDER BY score DESC,last_seen DESC LIMIT ?"; params.append(limit)
+        query += " ORDER BY last_seen DESC,id DESC LIMIT ?"; params.append(limit)
         with self.connect() as connection:
             return connection.execute(query, params).fetchall()
 
@@ -199,7 +213,7 @@ class Database:
             return connection.execute("SELECT * FROM videos WHERE aweme_id=?", (aweme_id,)).fetchone()
 
     def update_video_ai(self, aweme_id: str, **values):
-        allowed = {"transcript", "analysis", "rewrite", "media_url", "archived", "analyzed_at", "material_tags", "material_note"}
+        allowed = {"transcript", "analysis", "rewrite", "media_url", "archived", "analyzed_at", "material_tags", "material_note", "local_video_path"}
         values = {key: value for key, value in values.items() if key in allowed}
         if not values:
             return
@@ -267,8 +281,13 @@ class Database:
         with self.connect() as connection:
             connection.execute("UPDATE leads SET status=? WHERE id=?", (status, lead_id))
 
-    def count_leads(self, keyword: str = "") -> int:
+    def count_leads(self, keyword: str = "", task_id: int | None = None) -> int:
         with self.connect() as connection:
+            if task_id is not None:
+                return int(connection.execute(
+                    "SELECT COUNT(DISTINCT e.lead_id) FROM lead_evidence e JOIN comments c ON c.comment_id=e.comment_id WHERE c.task_id=?",
+                    (task_id,),
+                ).fetchone()[0])
             if keyword:
                 return int(connection.execute("SELECT COUNT(*) FROM leads WHERE keyword=?", (keyword,)).fetchone()[0])
             return int(connection.execute("SELECT COUNT(*) FROM leads").fetchone()[0])

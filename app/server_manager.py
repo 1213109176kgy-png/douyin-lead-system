@@ -30,10 +30,11 @@ class ServerManager:
         except OSError:
             return False
 
+    def local_binary(self) -> Path:
+        return self.server_root.parent / "douyin-local.exe"
+
     def build_command(self) -> list[str]:
-        if getattr(sys, "frozen", False):
-            return [sys.executable, "--server", str(self.server_root)]
-        return [sys.executable, "-m", "app.main", "--server", str(self.server_root)]
+        return [str(self.local_binary()), "serve", "--addr", f"127.0.0.1:{self.port}"]
 
     @staticmethod
     def prepare_ca_bundle() -> Path:
@@ -56,26 +57,22 @@ class ServerManager:
                 last_error = exc
         raise RuntimeError(f"无法准备 HTTPS 证书文件：{last_error}")
 
-    def start(self, order_number: str, timeout: float = 35) -> tuple[bool, str]:
+    def start(self, cookie: str = "", timeout: float = 35) -> tuple[bool, str]:
         if self.is_ready():
             return True, "本地服务已运行"
-        if not order_number.strip():
-            return False, "请先填写订单授权号"
-        if not (self.server_root / "main.py").exists():
-            return False, f"未找到本地服务：{self.server_root}"
+        binary = self.local_binary()
+        if not binary.exists():
+            return False, f"未找到开源本地服务：{binary}"
         env = os.environ.copy()
-        env["MOREAPI_ORDER_NUM"] = order_number.strip()
-        ca_bundle = str(self.prepare_ca_bundle())
-        env["CURL_CA_BUNDLE"] = ca_bundle
-        env["SSL_CERT_FILE"] = ca_bundle
-        env["REQUESTS_CA_BUNDLE"] = ca_bundle
+        if cookie.strip():
+            env["DOUYIN_COOKIE"] = cookie.strip()
         env["PYTHONUTF8"] = "1"
         project_root = str(Path(__file__).resolve().parents[1])
         env["PYTHONPATH"] = project_root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self._log_handle = self.log_path.open("a", encoding="utf-8")
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        self.process = subprocess.Popen(self.build_command(), cwd=self.server_root, env=env, stdout=self._log_handle, stderr=subprocess.STDOUT, creationflags=flags)
+        self.process = subprocess.Popen(self.build_command(), cwd=binary.parent, env=env, stdout=self._log_handle, stderr=subprocess.STDOUT, creationflags=flags)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
@@ -83,7 +80,7 @@ class ServerManager:
             if self.is_ready():
                 return True, "本地服务启动成功"
             time.sleep(0.5)
-        return False, "本地服务启动超时，请检查授权号和日志"
+        return False, "本地服务启动超时，请检查日志"
 
     def stop(self):
         if self.process and self.process.poll() is None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -25,11 +26,11 @@ def walk(value):
 def parse_videos(payload) -> list[dict]:
     found, seen = [], set()
     for node in walk(payload):
-        aweme_id = str(first(node, ("aweme_id", "item_id"), ""))
+        aweme_id = str(first(node, ("aweme_id", "item_id", "id"), ""))
         if not aweme_id or aweme_id in seen: continue
         author = node.get("author") if isinstance(node.get("author"), dict) else {}
         statistics = node.get("statistics") if isinstance(node.get("statistics"), dict) else {}
-        found.append({"aweme_id": aweme_id, "title": str(first(node, ("desc", "title", "caption"), "")), "url": str(first(node, ("share_url", "url"), f"https://www.douyin.com/video/{aweme_id}")), "author_uid": str(first(author, ("sec_uid", "sec_user_id", "uid"), "")), "author_name": str(first(author, ("nickname", "name"), "")), "digg_count": int(first(statistics, ("digg_count", "like_count"), 0) or 0), "collect_count": int(first(statistics, ("collect_count", "favorite_count"), 0) or 0), "comment_count": int(first(statistics, ("comment_count",), 0) or 0)})
+        found.append({"aweme_id": aweme_id, "title": str(first(node, ("desc", "title", "caption"), "")), "url": str(first(node, ("share_url", "url"), f"https://www.douyin.com/video/{aweme_id}")), "author_uid": str(first(author, ("sec_uid", "sec_user_id", "uid"), first(node, ("author_sec_uid",), ""))), "author_name": str(first(author, ("nickname", "name"), first(node, ("author_nick", "author"), ""))), "digg_count": int(first(statistics, ("digg_count", "like_count"), first(node, ("digg_count",), 0)) or 0), "collect_count": int(first(statistics, ("collect_count", "favorite_count"), first(node, ("collect_count",), 0)) or 0), "comment_count": int(first(statistics, ("comment_count",), first(node, ("comment_count",), 0)) or 0)})
         seen.add(aweme_id)
     return found
 
@@ -38,12 +39,22 @@ def parse_comments(payload) -> list[dict]:
     found, seen = [], set()
     for node in walk(payload):
         text = first(node, ("text", "comment_text", "content"), "")
-        user = first(node, ("user", "author", "comment_user"), {})
+        user = first(node, ("user", "comment_user"), {})
+        if not user and isinstance(node.get("author"), dict):
+            user = node["author"]
         if not isinstance(text, str) or not text.strip() or not isinstance(user, dict): continue
-        cid = str(first(node, ("cid", "comment_id"), "")); uid = str(first(user, ("sec_uid", "sec_user_id", "uid", "user_id"), "")); nickname = str(first(user, ("nickname", "name", "display_name"), ""))
+        cid = str(first(node, ("cid", "comment_id", "id"), ""))
+        sec_uid = str(first(user, ("sec_uid", "sec_user_id"), first(node, ("author_sec_uid",), "")))
+        numeric_uid = str(first(user, ("uid", "user_id"), first(node, ("author_id",), "")))
+        uid = sec_uid or numeric_uid
+        nickname = str(first(user, ("nickname", "name", "display_name"), first(node, ("author_nick", "author"), "")))
         key = cid or f"{uid}:{text.strip()}"
         if key in seen or not (uid or nickname): continue
-        found.append({"comment_id": cid, "text": text.strip(), "user_id": uid, "nickname": nickname, "likes": int(first(node, ("digg_count", "like_count"), 0) or 0), "created_at": str(first(node, ("create_time", "timestamp"), "")), "profile_url": str(first(user, ("share_url", "profile_url"), f"https://www.douyin.com/user/{uid}" if uid else ""))})
+        region = str(first(node, ("region", "ip_label", "ip_location"), "")).replace("IP属地：", "").strip()
+        profile_url = str(first(user, ("share_url", "profile_url"), ""))
+        if not profile_url and sec_uid:
+            profile_url = f"https://www.douyin.com/user/{sec_uid}"
+        found.append({"comment_id": cid, "text": text.strip(), "user_id": uid, "nickname": nickname, "region": region, "likes": int(first(node, ("digg_count", "like_count"), 0) or 0), "created_at": str(first(node, ("create_time", "timestamp"), "")), "profile_url": profile_url})
         seen.add(key)
     return found
 
@@ -60,6 +71,12 @@ class LocalApiClient:
         self.base_url = base_url.rstrip("/"); self.password = password; self.delay = max(0.8, float(delay)); self.cookie = cookie.strip(); self.last_request = 0.0
 
     def post(self, endpoint: str, payload: dict, retries=3):
+        if endpoint == "/api/douyin/video_comment":
+            rows = self.get_rows(f"/v1/comments/{urllib.parse.quote(str(payload['aweme_id']), safe='')}", {"limit": payload.get("count", 50)}, retries)
+            return {"comments": rows, "has_more": False, "cursor": ""}
+        if endpoint == "/api/douyin/aweme_detail":
+            rows = self.get_rows(f"/v1/video/{urllib.parse.quote(str(payload['aweme_id']), safe='')}", {}, retries)
+            return rows[0] if rows else {}
         if self.password: payload = {**payload, "pwd": self.password}
         wait = self.delay - (time.monotonic() - self.last_request)
         if wait > 0: time.sleep(wait)
@@ -91,26 +108,45 @@ class LocalApiClient:
             time.sleep(min(2 ** attempt, 4))
         raise RuntimeError("本地接口请求失败")
 
+    def get_rows(self, endpoint: str, params: dict | None = None, retries=3) -> list[dict]:
+        query = urllib.parse.urlencode(params or {})
+        url = self.base_url + endpoint + (("?" + query) if query else "")
+        for attempt in range(retries):
+            wait = self.delay - (time.monotonic() - self.last_request)
+            if wait > 0: time.sleep(wait)
+            self.last_request = time.monotonic()
+            try:
+                with urllib.request.urlopen(url, timeout=45) as response:
+                    text = response.read().decode("utf-8").strip()
+                return [json.loads(line) for line in text.splitlines() if line.strip()]
+            except urllib.error.HTTPError as exc:
+                if attempt >= retries - 1:
+                    raise RuntimeError(f"本地接口错误 HTTP {exc.code}") from exc
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+                if attempt >= retries - 1:
+                    raise RuntimeError(f"本地接口请求失败：{exc}") from exc
+            time.sleep(min(2 ** attempt, 4))
+        return []
+
     def search_videos(self, keyword: str, count: int):
-        payload = {"keyword": keyword, "count": str(min(count, 18)), "offset": "0", "publish_time": "0", "filter_duration": "0", "sort_type": "0"}
-        if self.cookie:
-            payload["cookie"] = self.cookie
-        messages = []
-        for endpoint in ("/api/douyin/search_video", "/api/douyin/search_video_v3", "/api/douyin/search_video_v2"):
-            result = self.post(endpoint, payload)
-            videos = parse_videos(result)
-            if videos:
-                return result, videos
-            data = result.get("data", {}) if isinstance(result, dict) else {}
-            if isinstance(data, dict) and data.get("status_msg"):
-                messages.append(str(data["status_msg"]))
-        detail = "；".join(dict.fromkeys(messages))
-        if "登录" in detail and not self.cookie:
-            raise RuntimeError("抖音搜索要求登录，请到系统设置填写浏览器中的抖音 Cookie 后重试")
-        raise RuntimeError(f"搜索接口未返回视频{('：' + detail) if detail else ''}")
+        path = "/v1/search/" + urllib.parse.quote(keyword, safe="")
+        hits = self.get_rows(path, {"limit": min(count, 100)})
+        videos = []
+        for hit in hits:
+            if hit.get("type") not in ("video", "aweme", ""):
+                continue
+            aweme_id = str(hit.get("id", ""))
+            if not aweme_id:
+                continue
+            detail = self.video_detail(aweme_id)
+            videos.extend(parse_videos(detail))
+            if len(videos) >= count:
+                break
+        if videos:
+            return hits, videos
+        if not self.cookie:
+            raise RuntimeError("尚未登录抖音，请先在系统设置中完成登录")
+        raise RuntimeError("抖音接口返回空结果。这不是未登录，而是独立接口受到平台风控；请使用已登录浏览器搜索")
 
     def video_detail(self, aweme_id: str):
-        payload = {"aweme_id": aweme_id}
-        if self.cookie:
-            payload["cookie"] = self.cookie
-        return self.post("/api/douyin/aweme_detail", payload)
+        return self.post("/api/douyin/aweme_detail", {"aweme_id": aweme_id})
